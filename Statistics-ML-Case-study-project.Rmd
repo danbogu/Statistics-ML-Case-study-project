@@ -1,0 +1,358 @@
+title: "Statistics Project"
+---
+
+#R data import
+```{r}
+raw_data <- read.csv("C:/Users/kolsk/Desktop/data.csv")
+```
+
+
+#R data cleaning
+```{r}
+library(magrittr)
+library(data.table)
+library(dplyr)
+#Check for duplicates:
+duplicated(raw_data) %>% any()#All the songs ids are unique in each sample.
+#Removing some variables:
+clean_data <- subset(raw_data, select = -c(id,speechiness,instrumentalness))
+
+#Making some of the factorial variables binary :
+clean_data$acousticness <- ifelse(clean_data$acousticness>0.5,1,0)
+clean_data$liveness <- ifelse(clean_data$liveness>0.8,1,0)
+
+#Making Duration in seceonds and in log transformation :
+clean_data$duration_ms <- clean_data$duration_ms/1000
+clean_data$duration_ms <- log(clean_data$duration_ms)
+clean_data <- clean_data %>% rename(log_duration_s=duration_ms)
+
+#Removing songs without popularity rate :
+clean_data <- clean_data[clean_data$popularity>0,]
+
+
+#Now we want to check if there are duplicated samples with different ids:
+duplicated(clean_data) %>% any() #We can see that same songs might have been inserted with different ids
+duplicated(clean_data) %>% which() %>% length() #42 samples
+#Lets present some of them:
+duplicated_data <- clean_data [duplicated(clean_data) %>% which(),]
+#Let's remove them
+clean_data <- clean_data[!duplicated(clean_data),]
+
+#Extracting the release date and making some casting :
+clean_data$release_date_year <- substr(clean_data$release_date,1,4)
+clean_data$release_date_month <- substr(clean_data$release_date,6,7)
+clean_data$release_date_day <- substr(clean_data$release_date,9,10)
+clean_data <- subset(clean_data, select = -c(release_date))
+clean_data$explicit <- as.factor(clean_data$explicit)
+clean_data$key <- as.factor(clean_data$key)
+clean_data$mode <- as.factor(clean_data$mode)
+clean_data$release_date_year<-as.integer(clean_data$release_date_year)
+clean_data$release_date_month<-as.integer(clean_data$release_date_month)
+clean_data$release_date_day<-as.integer(clean_data$release_date_day)
+
+#Are all the values in 'year' variables are the same as 'release_date_year' variables.
+(clean_data$year == clean_data$release_date_year) %>% all()
+
+#We can remove one of them:
+clean_data <- subset(clean_data, select = -c(year))
+
+#na removal:
+is.na(clean_data[,1:15]) %>% any() #No NA values.
+
+
+```
+
+#save all numerical vars in order to normalize them in scale 0-1 for making correlation plot :
+
+```{r}
+
+numerical_vars<-c("popularity", "valence","danceability","log_duration_s", "energy","loudness","tempo","release_date_year")
+library(purrr)
+library(tibble)
+library(tidyr)
+library(ggplot2)
+library(Hmisc)
+cors <- function(df) { 
+   M <- Hmisc::rcorr(as.matrix(df))
+   Mdf <- map(M, ~data.frame(.x))
+}
+
+formatted_cors <- function(df){
+  cors(df) %>%
+  map(~rownames_to_column(.x, var="measure1")) %>%
+  map(~pivot_longer(.x, -measure1, "measure2")) %>% 
+  bind_rows(.id = "id") %>%
+  pivot_wider(names_from = id, values_from = value)%>%
+  mutate(sig_p = T, p_if_sig = P, r_if_sig = r) 
+}
+ 
+formatted_cors(clean_data[,numerical_vars]) %>% 
+  ggplot(aes(measure1, measure2, fill=r, label=round(r_if_sig,2))) +
+  geom_tile() +
+  labs(x = NULL , y = NULL, fill = "Pearson's\nCorrelation", title="Correlations in the data") +
+  scale_fill_gradient2(mid="#FBFEF9",low="#0C6291",high="#A63446", limits=c(-1,1)) +
+  geom_text() +
+  theme(axis.text.x = element_text(angle = 90)) +
+  scale_x_discrete(expand=c(0,0)) +
+  scale_y_discrete(expand=c(0,0))
+
+
+```
+
+#r Data normalizing
+```{r}
+
+normalize <- function(x){
+  return((x - min(x))/(max(x) - min(x)))
+}
+
+
+#{r numerical vars normalized}
+normalized_data <- clean_data %>% mutate_at(numerical_vars, ~(normalize(.) %>% as.vector))
+
+normalized_data <- normalized_data[,-c(3,12)]
+
+```
+
+
+#Describe the Data :
+```{r}
+
+# Describing each continues variable distribution :
+par(mfrow = c(3,3))
+for ( i in numerical_vars){
+ hist(clean_data[,i],xlab=i , main = i)
+}
+
+```
+
+
+
+```{r}
+#Describing each factorial variable distribution :
+factorial_vars <- c("acousticness","explicit","key","liveness","mode")
+par(mfrow = c(2,3))
+for ( i in factorial_vars){
+ plot(as.factor(clean_data[,i]),xlab=i , main = i)
+ # print(class(as.numeric(clean_data[,i])))
+}
+
+```
+
+
+```{r}
+# #Plot of the trend between acousticness ~ danceability 
+# clean_data <- as.data.table(clean_data)
+# temp_year_data <- clean_data[release_date_year>1950,]
+# mean_by_year <-  temp_year_data[, mean(danceability), by =release_date_year ]
+# mean_by_year2 <- temp_year_data[, mean(acousticness), by =release_date_year ]
+# mean_by_year_final <- merge(mean_by_year,mean_by_year2, by = "release_date_year")
+# mean_by_year_final <- mean_by_year_final %>% rename(accousticness=V1.y)
+# mean_by_year_final <- mean_by_year_final %>% rename(danceability=V1.x)
+# 
+# g <- ggplot(mean_by_year_final) + geom_line(mapping=aes(x=release_date_year , y=accousticness, col="accousticness" ),lwd=2)
+# g<- g+geom_line(mapping=aes(x=release_date_year , y=danceability ,col = "danceability" ),lwd=2)
+# g <- g+ ylab("mean") + ggtitle("Acousticness and Danceability over the years")
+# g
+
+```
+
+```{r}
+# Histogram of the most popular artists which have over 10 songs : 
+
+
+clean_data_temp <- as.data.table(clean_data[clean_data$artists %in% names(table(clean_data$artists))[table(clean_data$artists) >= 10],])
+
+mean_by_artits <-  clean_data_temp[, mean(popularity), by=artists ]
+mean_by_artits<-mean_by_artits[order(mean_by_artits$V1,decreasing = T)[1:10]]
+mean_by_artits <- mean_by_artits %>% rename(mean_pop=V1)
+g1<- ggplot(mean_by_artits,mapping= aes(x=factor(artists,levels=artists[order(mean_by_artits$mean_pop)]), y=mean_pop,fill=artists)) + geom_histogram(,stat="identity",show.legend=FALSE ) 
+g1<- g1 + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +xlab("artists") + ggtitle("The Most Popular Artists")
+
+g1
+
+
+```
+
+
+```{r}
+# Duration_S from 1980
+raw_data <- as.data.table(raw_data)
+raw_data_duration <- raw_data[year>1980,]
+mean_by_year3 <-  raw_data_duration[, mean(duration_ms), by =year ]
+mean_by_year3 <- mean_by_year3 %>% rename(duration_ms=V1)
+g2 <- ggplot( mean_by_year3) + geom_line(mapping = aes(x=year , y=duration_ms , col="red" ),lwd=2,show.legend=FALSE)
+g2 <- g2+ ggtitle("Duration_s From 1980 over the years")
+g2
+```
+
+
+
+```{r}
+#Popularity over the years
+
+mean_by_year4 <- raw_data[,mean(popularity), by = year]
+mean_by_year4 <- mean_by_year4 %>% rename(popularity=V1)
+g3 <- ggplot(mean_by_year4) + geom_line(mapping = aes(x=year, y=popularity),colour="green",lwd=2,show.legend=FALSE)
+g3 <- g3+ ggtitle("Popularity over the years")
+g3
+
+
+```
+
+
+```{r}
+#Popularity by Month 
+
+clean_data <- as.data.table(clean_data)
+mean_by_month <- clean_data[which(!is.na(release_date_month)),mean(popularity) , by = release_date_month]
+mean_by_month <- mean_by_month %>% rename(popularity=V1)
+g4 <- ggplot(mean_by_month) + geom_histogram(mapping = aes(x=release_date_month , y= popularity,fill=release_date_month),stat="identity",show.legend=FALSE)
+g4 <- g4+ ggtitle("Popularity by Month")+ scale_x_continuous(breaks=seq(1,12,1),lim=c(0.5,12.5))
+g4
+```
+
+
+
+#Running Models:
+
+```{r}
+#First defining the MSE Function - Our cretira for comparison
+MSE <- function(x) x^2 %>% mean
+```
+
+
+
+```{r}
+library(MASS)
+library(caret)
+library(tidyverse)
+
+#Dividing the data to test and train
+normalized_data <- normalized_data[,-c(13:15)]
+dt = sample(nrow(normalized_data), nrow(normalized_data)*.8)
+train<-normalized_data[dt,]
+test<-normalized_data[-dt,]
+```
+
+
+#Linear Models : 
+```{r}
+
+library(lme4)
+library(glmnet)
+
+
+#Linear Simple Regression with stepwise selections :
+reg1 <- lm(popularity ~., data=train) #Linear Reg on all the variables
+summary(reg1)
+reg2 <- lm(popularity~1, data=train) #Linear reg on just the intercept 
+scope <- list(upper=reg1 , lower=reg2)
+step_reg <- step(reg2 , scope = scope , direction = "both" , trace=TRUE,k=log(nrow(train)))
+step_predict <- predict(step_reg,newdata=test)
+step_mse <- MSE((step_predict-test$popularity))
+cat("The MSE from step_wise regression is :", step_mse)
+summary( step_reg)
+
+
+#Trying with Intereactions :
+reg3 <- lm(popularity~(.)^2+I(valence^2)+I(danceability^2)+I(log_duration_s^2)+I(energy^2)+I(loudness^2) , data = train )
+summary(reg3)
+scope2 <- list (upper=reg3 , lower=reg2)
+step_reg_int <- step(reg2 , scope = scope2 , direction = "both" , trace=TRUE , k=log(nrow(train)))
+summary(step_reg_int)
+step_int_predict <- predict ( step_reg_int , newdata=test)
+step_int_mse <- MSE((step_int_predict-test$popularity))
+cat("The MSE From intereaction step regression is " , step_int_mse)
+anova(step_reg_int)
+
+#Linear Regression with ridge and lasso penalty
+X_trn <- model.matrix(popularity~.-1, data=train) 
+X_tst <- model.matrix(popularity~.-1 , data=test)
+
+cvfit <- cv.glmnet(X_trn,y=train$popularity,family='gaussian',alpha=0)
+best_lambda<-  cvfit$lambda.1se #  lambda. 1se , which gives the most regularized model such that error is withinone standard error of the minimum
+plot(cvfit)
+
+glmnet_ridge <- glmnet(x=X_trn,y=train$popularity,family='gaussian',alpha=0,lambda=best_lambda)
+ridge_prediction <- predict(glmnet_ridge,newx=X_tst)
+ridge_mse <-MSE((ridge_prediction-test$popularity))
+cat("The MSE from ridge regression is ", ridge_mse)
+
+
+cvfit1 <- cv.glmnet(X_trn,y=train$popularity,family='gaussian',alpha=1)
+best_lambda1<-  cvfit1$lambda.1se #  lambda. 1se , which gives the most regularized model such that error is within                                     one standard error of the minimum
+plot(cvfit1)
+
+glmnet_lasso <- glmnet(x=X_trn,y=train$popularity,family='gaussian',alpha=1,lambda=best_lambda1)
+lasso_prediction <- predict(glmnet_lasso,newx=X_tst)
+lasso_mse <- MSE((lasso_prediction-test$popularity))
+cat("The MSE from lasso regression is:", lasso_mse)
+
+
+# Trying to adapt LMM Model regarding diffrent varience by key :
+lme.reg <- lme4::lmer(popularity~ 1 |key , data = train )
+summary(lme.reg)
+
+
+
+
+
+ 
+
+
+
+
+```
+
+
+#Non Linear Models :
+```{r}
+#Trees : 
+library(rpart)
+library(rpart.plot)
+library(caret)
+library(tree)
+tree.1 <- rpart(popularity ~. , data = train)
+tree.mse <- MSE(predict(tree.1 , newdata = test)-test$popularity)
+cat("The tree mse is " ,tree.mse )
+rpart.plot(tree.1)
+
+```
+
+#Knn
+```{r}
+library(FNN)
+library(class)
+#Find the Best K by looping over random k's : 
+Mse_Vector <- vector () 
+for ( i in seq(5,100,5) ){
+knn.1 <- FNN::knn.reg(train=X_trn , test= X_tst , y = train$popularity , k=i )
+knn.mse <- MSE(knn.1$pred- (test$popularity))
+Mse_Vector <- append (Mse_Vector , knn.mse )
+}
+{plot(seq(5,100,5),Mse_Vector, type='l', xlab = "Number of Neighbors - K " , main = "MSE of KNN" ,ylab="MSE")
+abline(v=30, col = "red")}
+
+knn.2 <- FNN::knn.reg(train=X_trn , test= X_tst , y = train$popularity , k=30 )
+knn.mse <- MSE(knn.1$pred- (test$popularity))
+cat("The knn mse is ", knn.mse)
+
+```
+
+
+#Validate Assumption Linear Models:
+```{r}
+
+ 
+ ##Validate our assumption in the step-wise regression:
+par(mfrow=c(1,2))
+plot(predict(step_reg_int),resid(step_reg_int),ylab="Residuals",xlab="Fitted Values" )
+abline(0,0)
+qqnorm(resid(step_reg_int))
+qqline(resid(step_reg_int))
+hist(normalized_data[,11],xlab="popularity" , main = "Popularity Histogram")
+
+
+
+```
